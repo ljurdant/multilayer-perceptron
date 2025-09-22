@@ -1,5 +1,7 @@
 import numpy as np
 from typing import List
+import pickle
+import matplotlib.pyplot as plt
 
 
 class DenseLayer:
@@ -46,8 +48,8 @@ class DenseLayer:
         elif self.activation_name == "tanh":
             return np.tanh(x)
         elif self.activation_name == "softmax":
+            x = np.asarray(x, dtype=np.float64)
             exp_x = np.exp(x)
-            print("exp x", exp_x)
             return exp_x / np.sum(exp_x, axis=1, keepdims=True)
         else:
             raise ValueError(f"Unknown activation function: {self.activation_name}")
@@ -75,7 +77,6 @@ class DenseLayer:
         self.last_z = np.dot(inputs, self.weights) + self.biases
 
         # Apply activation function
-        print("last z", self.last_z)
         self.last_output = self.activation_function(self.last_z)
 
         return self.last_output
@@ -92,8 +93,8 @@ class DenseLayer:
         dx = np.dot(dz, self.weights.T)
 
         # Store gradients for weight updates
-        self.dW = dW
-        self.db = db
+        self.dW = np.asarray(dW, dtype=np.float64)
+        self.db = np.asarray(db, dtype=np.float64)
 
         return dx
 
@@ -104,11 +105,17 @@ class NeuralNetwork:
         hidden_layers: List[DenseLayer],
         output_layer: DenseLayer,
         learning_rate: float = 0.001,
-        loss_type: str = "meanSquaredError",
+        loss_type: str = "categoricalCrossentropy",
     ):
         self.layers = hidden_layers + [output_layer]
         self.learning_rate = learning_rate
         self.loss_type = loss_type
+        self.training_history = {
+            "loss": [],
+            "val_loss": [],
+            "accuracy": [],
+            "val_accuracy": [],
+        }
 
     def forward(self, X: np.ndarray) -> np.ndarray:
         """Forward pass through the network"""
@@ -117,11 +124,31 @@ class NeuralNetwork:
             output = layer.forward(output)
         return output
 
+    def compute_loss(
+        self, y_true: np.ndarray, y_pred: np.ndarray, loss_type: str
+    ) -> float:
+        """Compute loss based on loss type"""
+        if loss_type == "categoricalCrossentropy":
+            # Clip predictions to prevent log(0)
+            y_pred_clipped = np.clip(y_pred, 1e-15, 1 - 1e-15)
+            return -np.mean(np.sum(y_true * np.log(y_pred_clipped), axis=1))
+        elif loss_type == "meanSquaredError":
+            return np.mean((y_true - y_pred) ** 2)
+        else:
+            raise ValueError(f"Unknown loss type: {loss_type}")
+
+    def compute_accuracy(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        """Compute classification accuracy"""
+        y_true_labels = np.argmax(y_true, axis=1)
+        y_pred_labels = np.argmax(y_pred, axis=1)
+        return np.mean(y_true_labels == y_pred_labels)
+
     def compute_loss_gradient(
         self, y_true: np.ndarray, y_pred: np.ndarray, loss_type: str
     ) -> np.ndarray:
         """Compute gradient of loss w.r.t. predictions"""
         if loss_type == "categoricalCrossentropy":
+
             # For softmax + categorical crossentropy, gradient simplifies to:
             return y_pred - y_true
         elif loss_type == "meanSquaredError":
@@ -142,19 +169,32 @@ class NeuralNetwork:
                 layer.weights -= learning_rate * layer.dW
                 layer.biases -= learning_rate * layer.db
 
+    def one_hot_encode(self, y: np.ndarray, num_classes: int) -> np.ndarray:
+        """Convert labels to one-hot encoding"""
+        one_hot = np.zeros((y.shape[0], num_classes))
+        one_hot[np.arange(y.shape[0]), y.astype(int)] = 1
+        return one_hot
+
     def fit(
-        self, X_train: np.ndarray, y_train: np.ndarray, epochs: int, batch_size: int
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        epochs: int,
+        batch_size: int,
     ):
         """Train the neural network"""
         n_batches = int(np.ceil(X_train.shape[0] / batch_size))
 
         for epoch in range(epochs):
-            print(f"Epoch {epoch + 1}/{epochs}: ", end="")
             permutation = np.random.permutation(X_train.shape[0])
             X_shuffled = X_train[permutation]
             y_shuffled = y_train[permutation]
 
             batch_count = 1
+            epoch_loss = 0.0
+            epoch_accuracy = 0.0
 
             for i in range(0, X_train.shape[0], batch_size):
                 X_batch = X_shuffled[i : i + batch_size]
@@ -163,13 +203,138 @@ class NeuralNetwork:
                 # Forward pass
                 y_pred = self.forward(X_batch)
 
+                # Convert true values to one-hot if using categorical crossentropy
+                y_batch_one_hot = self.one_hot_encode(y_batch, self.layers[-1].units)
+
                 # Backward pass
                 loss_gradient = self.compute_loss_gradient(
-                    y_batch, y_pred, self.loss_type
+                    y_batch_one_hot, y_pred, self.loss_type
                 )
                 self.backward(loss_gradient)
 
                 # Update weights
                 self.update_weights(self.learning_rate)
 
+                loss = self.compute_loss(y_batch_one_hot, y_pred, self.loss_type)
+                accuracy = self.compute_accuracy(y_batch_one_hot, y_pred)
+
+                print(
+                    f"\repoch {epoch + 1:0{len(str(epochs))}d}/{epochs}: batch {batch_count:0{len(str(n_batches))}d}/{n_batches} loss={loss:.4f} accuracy={accuracy:.4f}",
+                    end="",
+                )
+                epoch_loss += loss
+                epoch_accuracy += accuracy
+
                 batch_count += 1
+
+            # Validation
+            y_val_one_hot = self.one_hot_encode(y_val, self.layers[-1].units)
+            val_pred = self.forward(X_val)
+            val_loss = self.compute_loss(y_val_one_hot, val_pred, self.loss_type)
+            val_accuracy = self.compute_accuracy(y_val_one_hot, val_pred)
+
+            epoch_accuracy /= n_batches
+            epoch_loss /= n_batches
+
+            # Store history
+            self.training_history["loss"].append(epoch_loss)
+            self.training_history["val_loss"].append(val_loss)
+            self.training_history["accuracy"].append(epoch_accuracy)
+            self.training_history["val_accuracy"].append(val_accuracy)
+
+            print(
+                f"\repoch {epoch + 1:0{len(str(epochs))}d}/{epochs}: batch {n_batches}/{n_batches} loss={epoch_loss:.4f} accuracy={epoch_accuracy:.4f} val_loss={val_loss:.4f} val_accuracy={val_accuracy:.4f}",
+            )
+
+    def save(self, filepath: str):
+        """Save the trained model"""
+        model_data = {
+            "hidden_layers": [],
+            "output_layer": {},
+            "training_history": self.training_history,
+        }
+
+        for layer in self.layers[:-1]:
+            layer_data = {
+                "units": layer.units,
+                "activation": layer.activation_name,
+                "weights_initializer": layer.weights_initializer,
+                "weights": layer.weights,
+                "biases": layer.biases,
+            }
+            model_data["hidden_layers"].append(layer_data)
+        output_layer = self.layers[-1]
+
+        output_layer_data = {
+            "units": output_layer.units,
+            "activation": output_layer.activation_name,
+            "weights_initializer": output_layer.weights_initializer,
+            "weights": output_layer.weights,
+            "biases": output_layer.biases,
+        }
+        model_data["output_layer"] = output_layer_data
+
+        with open(filepath, "wb") as f:
+            pickle.dump(model_data, f)
+        print(f"Model saved to {filepath}")
+
+    def plot(self):
+        """Plot training and validation loss and accuracy"""
+
+        epochs = range(1, len(self.training_history["loss"]) + 1)
+
+        plt.figure(figsize=(12, 5))
+
+        plt.subplot(1, 2, 1)
+        plt.plot(epochs, self.training_history["loss"], label="Training Loss")
+        plt.plot(epochs, self.training_history["val_loss"], label="Validation Loss")
+        plt.xlabel("Epochs")
+        plt.ylabel("Loss")
+        plt.title("Loss over Epochs")
+        plt.legend()
+
+        plt.subplot(1, 2, 2)
+        plt.plot(epochs, self.training_history["accuracy"], label="Training Accuracy")
+        plt.plot(
+            epochs, self.training_history["val_accuracy"], label="Validation Accuracy"
+        )
+        plt.xlabel("Epochs")
+        plt.ylabel("Accuracy")
+        plt.title("Accuracy over Epochs")
+        plt.legend()
+
+        plt.tight_layout()
+        plt.show()
+
+    @classmethod
+    def load(cls, filepath: str):
+        """Load a trained model"""
+        with open(filepath, "rb") as f:
+            model_data = pickle.load(f)
+
+        hidden_layers = []
+        for layer_data in model_data["hidden_layers"]:
+            layer = DenseLayer(
+                units=layer_data["units"],
+                activation=layer_data["activation"],
+                weights_initializer=layer_data["weights_initializer"],
+            )
+            layer.weights = layer_data["weights"]
+            layer.biases = layer_data["biases"]
+            hidden_layers.append(layer)
+        output_layer_data = model_data["output_layer"]
+        output_layer = DenseLayer(
+            units=output_layer_data["units"],
+            activation=output_layer_data["activation"],
+            weights_initializer=output_layer_data["weights_initializer"],
+        )
+        output_layer.weights = output_layer_data["weights"]
+        output_layer.biases = output_layer_data["biases"]
+
+        model = cls(hidden_layers, output_layer)
+        model.training_history = model_data["training_history"]
+        return model
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """Make predictions"""
+        return self.forward(X)

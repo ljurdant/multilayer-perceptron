@@ -1,0 +1,3 @@
+layers 64 24 
+batch 24
+epochs 200 
