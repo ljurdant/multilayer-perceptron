@@ -170,7 +170,7 @@ class NeuralNetwork:
         """Update weights using computed gradients"""
         if self.stagnation_counter >= self.max_stagnation:
             learning_rate *= 0.5
-            self.stagnation_counter = 0
+            # self.stagnation_counter = 0
             print(
                 f"\nStagnation detected. Reducing learning rate to {learning_rate:.6f}"
             )
@@ -258,6 +258,13 @@ class NeuralNetwork:
                 if (
                     self.training_history["val_loss"][-1]
                     >= self.training_history["val_loss"][-2]
+                ):
+                    self.val_stagnation_counter += 1
+                else:
+                    self.val_stagnation_counter = 0
+                if (
+                    self.training_history["loss"][-1]
+                    >= self.training_history["loss"][-2]
                 ):
                     self.stagnation_counter += 1
                 else:
