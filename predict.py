@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from neuralNetwork import NeuralNetwork
+from src.neuralNetwork import NeuralNetwork
 from training import extract_data, format_data, xy_split
 
 

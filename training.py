@@ -4,7 +4,8 @@ import argparse
 import pandas as pd
 import numpy as np
 
-from neuralNetwork import NeuralNetwork, DenseLayer
+from src.neuralNetwork import NeuralNetwork, DenseLayer
+from data_split import extract_data, format_data, xy_split, train_validation_split
 
 
 def parse_args():
@@ -25,13 +26,21 @@ def parse_args():
         if args.learning_rate <= 0:
             raise ValueError("Learning rate must be positive")
 
+        if args.loss not in ["categoricalCrossentropy", "meanSquaredError"]:
+            raise ValueError(
+                "Loss function must be either 'categoricalCrossentropy' or 'meanSquaredError'"
+            )
+
         return args
 
     parser = argparse.ArgumentParser(
         description="Train a neural network with specified architecture and parameters."
     )
     parser.add_argument(
-        "--data-path", type=str, required=True, help="Path to the training data"
+        "--train-path", type=str, required=True, help="Path to the training data"
+    )
+    parser.add_argument(
+        "--val-path", type=str, required=False, help="Path to the validation data"
     )
     parser.add_argument(
         "--layers",
@@ -52,63 +61,27 @@ def parse_args():
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default="categoricalCrossentropy",
+        help="Loss function to use during training",
+    )
 
     return validate_arguments(parser.parse_args())
-
-
-def extract_data(data_path: str) -> np.ndarray:
-    df = pd.read_csv(data_path)
-    # Perform feature extraction on the DataFrame
-    return df.to_numpy()
-
-
-def format_data(data: np.ndarray) -> np.ndarray:
-    def zscore_normalize(column: np.ndarray) -> np.ndarray:
-        mean = np.mean(column)
-        std = np.std(column)
-        return (column - mean) / std
-
-    for i in range(data.shape[1]):
-        if i == 1:
-            data[:, i] = (data[:, i] == "M").astype(int)
-        else:
-            data[:, i] = zscore_normalize(data[:, i].astype(float))
-
-    return data
-
-
-def xy_split(data):
-    X = np.concatenate((data[:, 0].reshape(-1, 1), data[:, 2:]), axis=1)
-    y = data[:, 1]
-    return X, y
-
-
-def get_data(data_path: str, seed):
-
-    def train_validation_split(data, split_ratio=0.8):
-        np.random.seed(seed)
-        np.random.shuffle(
-            data,
-        )
-        split_index = int(len(data) * split_ratio)
-        train_data = data[:split_index]
-        val_data = data[split_index:]
-
-        return train_data, val_data
-
-    data_path = args.data_path
-    data = extract_data(data_path)
-    data = format_data(data)
-    train_data, val_data = train_validation_split(data)
-    x_train, y_train = xy_split(train_data)
-    x_val, y_val = xy_split(val_data)
-    return x_train, y_train, x_val, y_val
 
 
 if __name__ == "__main__":
 
     args = parse_args()
-    x_train, y_train, x_val, y_val = get_data(args.data_path, seed=args.seed)
+    if args.val_path:
+        x_train, y_train = xy_split(format_data(extract_data(args.train_path)))
+        x_val, y_val = xy_split(format_data(extract_data(args.val_path)))
+    else:
+        data = format_data(extract_data(args.train_path))
+        train_data, val_data = train_validation_split(data, 0.8, args.seed)
+        x_train, y_train = xy_split(train_data)
+        x_val, y_val = xy_split(val_data)
 
     model = NeuralNetwork(
         hidden_layers=[

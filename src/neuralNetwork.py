@@ -104,7 +104,7 @@ class NeuralNetwork:
         self,
         hidden_layers: List[DenseLayer],
         output_layer: DenseLayer,
-        learning_rate: float = 0.001,
+        learning_rate: float = 0.01,
         loss_type: str = "categoricalCrossentropy",
     ):
         self.layers = hidden_layers + [output_layer]
@@ -116,6 +116,10 @@ class NeuralNetwork:
             "accuracy": [],
             "val_accuracy": [],
         }
+        self.val_stagnation_counter = 0
+        self.max_val_stagnation = 10
+        self.stagnation_counter = 0
+        self.max_stagnation = 5
 
     def forward(self, X: np.ndarray) -> np.ndarray:
         """Forward pass through the network"""
@@ -164,6 +168,12 @@ class NeuralNetwork:
 
     def update_weights(self, learning_rate: float):
         """Update weights using computed gradients"""
+        if self.stagnation_counter >= self.max_stagnation:
+            learning_rate *= 0``.5
+            print(
+                f"\nStagnation detected. Reducing learning rate to {learning_rate:.6f}"
+            )
+            print("Continuing training...\n")
         for layer in self.layers:
             if hasattr(layer, "dW"):
                 layer.weights -= learning_rate * layer.dW
@@ -186,6 +196,7 @@ class NeuralNetwork:
     ):
         """Train the neural network"""
         n_batches = int(np.ceil(X_train.shape[0] / batch_size))
+        self.stagnation_counter = 0
 
         for epoch in range(epochs):
             permutation = np.random.permutation(X_train.shape[0])
@@ -242,9 +253,24 @@ class NeuralNetwork:
             self.training_history["accuracy"].append(epoch_accuracy)
             self.training_history["val_accuracy"].append(val_accuracy)
 
+            if epoch > 1:
+                if (
+                    self.training_history["val_loss"][-1]
+                    >= self.training_history["val_loss"][-2]
+                ):
+                    self.stagnation_counter += 1
+                else:
+                    self.stagnation_counter = 0
+
             print(
                 f"\repoch {epoch + 1:0{len(str(epochs))}d}/{epochs}: batch {n_batches}/{n_batches} loss={epoch_loss:.4f} accuracy={epoch_accuracy:.4f} val_loss={val_loss:.4f} val_accuracy={val_accuracy:.4f}",
             )
+
+            if self.stagnation_counter >= self.max_stagnation:
+                print(
+                    f"\nEarly stopping at epoch {epoch + 1} due to stagnation in validation loss."
+                )
+                break
 
     def save(self, filepath: str):
         """Save the trained model"""
