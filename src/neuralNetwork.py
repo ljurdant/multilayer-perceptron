@@ -104,7 +104,7 @@ class NeuralNetwork:
         self,
         hidden_layers: List[DenseLayer],
         output_layer: DenseLayer,
-        learning_rate: float = 0.01,
+        learning_rate: float = 0.001,
         loss_type: str = "categoricalCrossentropy",
     ):
         self.layers = hidden_layers + [output_layer]
@@ -169,7 +169,8 @@ class NeuralNetwork:
     def update_weights(self, learning_rate: float):
         """Update weights using computed gradients"""
         if self.stagnation_counter >= self.max_stagnation:
-            learning_rate *= 0``.5
+            learning_rate *= 0.5
+            self.stagnation_counter = 0
             print(
                 f"\nStagnation detected. Reducing learning rate to {learning_rate:.6f}"
             )
